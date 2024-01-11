@@ -10,6 +10,7 @@ import request from 'request'
 dontenv.config()
 
 const PORT = process.env.PORT || 3000
+
 const redirect_uri = `http://localhost:${PORT}/callback`
 
 const stateKey = 'spotify_auth_state'
@@ -22,7 +23,8 @@ const generateRandomString = (length) => {
 }
 
 const app = express()
-app.use(cors()).use(cookieParser())
+app .use(cors())
+    .use(cookieParser())
 
 app.get('/login', (req, res) => {
     const state = generateRandomString(16)
@@ -38,7 +40,7 @@ app.get('/login', (req, res) => {
             scope,
             redirect_uri,
             state,
-            show_dialog: true,
+            show_dialog: false,
         })
     )
 })
@@ -48,9 +50,9 @@ app.get('/callback', (req, res) =>  {
     const code = req.query.code || null
     const storedState = req.cookies[stateKey] || null
 
-    console.log(state)
-    console.log(code)
-    console.log(storedState)
+    console.log("state " + state)
+    console.log("code " + code)
+    console.log("storedState " + storedState)
     
     if (state !== storedState) {
         res.status(401).end("something sussy is happening");
@@ -59,6 +61,14 @@ app.get('/callback', (req, res) =>  {
 
     res.clearCookie(stateKey)
     
+    let accessToken = req.query.access_token || null
+    let refreshToken = req.query.refresh_token || null
+
+    if (!refreshToken) {
+        
+    }
+
+
     let authOptions = {
         url: 'https://accounts.spotify.com/api/token',
         form: {
@@ -80,12 +90,72 @@ app.get('/callback', (req, res) =>  {
 
         } else {
             console.log(body)
-            const accessToken = body.access_token
+            accessToken = body.access_token
+            refreshToken = body.refresh_token
             //res.json({ access_token: accessToken });
-            res.send("now go to / for some more action")
+            req.query.refresh_token = refreshToken
+            //res.send("now go to / for some more action")
+            //res.json({'yo': 'hoi'})
+            console.log("refresh token 1: " + req.query.refresh_token)
+
+            let options = {
+                url: 'https://api.spotify.com/v1/me',
+                headers: {'Authorization': 'Bearer ' + accessToken},
+                json: true,
+            }
+
+            request.get(options, (error, respone, body) => {
+                
+                console.log(body)
+            })
+
+            res.redirect('/?' + querystring.stringify({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            }))
+            
         }
     });
+
 });
+
+app.get('/refresh_token', (req, res) => {
+    const refreshToken = req.query.refresh_token
+    let authOptions = {
+        url: 'https://accounts.spotify.com/api/token',
+        form: {
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+        },
+        headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'Authorization': 'Basic ' + (Buffer.from(process.env.CLIENT_ID + ':' + process.env.CLIENT_SECRET).toString('base64'))
+        },
+        json: true
+    }
+
+    request.post(authOptions, (error, response, body) => {
+        if (!error && response.statusCode === 200) {
+            let accessToken = body.access_token
+            let refreshToken = body.refresh_token
+            res.redirect('/?' + querystring.stringify({
+                accessToken,
+                refreshToken,
+            }))
+        }
+    })
+
+})
+
+app.get('/', (req, res) => {
+    let accessToken = req.query.access_token || null
+    let refreshToken = req.query.refresh_token || null
+
+    
+    console.log('access token in the /', accessToken)
+    console.log('refresh token in the /', refreshToken)
+    res.json({accessToken, refreshToken})
+})
 
 app.listen(PORT, () => {
     console.log("App started at the port " + PORT)
