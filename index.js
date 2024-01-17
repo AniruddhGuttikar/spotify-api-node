@@ -5,7 +5,7 @@ import crypto from 'crypto'
 import cors from 'cors'
 import dontenv from 'dotenv'
 import request from 'request'
-
+import axios from 'axios'
 
 dontenv.config()
 
@@ -17,7 +17,7 @@ const stateKey = 'spotify_auth_state'
 
 const generateRandomString = (length) => {
     return crypto
-    .randomBytes(length)
+    .randomBytes(100)
     .toString('hex')
     .slice(0, length)
 }
@@ -29,7 +29,7 @@ app .use(cors())
 app.get('/login', (req, res) => {
     const state = generateRandomString(16)
     const response_type = 'code'
-    const scope = 'user-read-private user-read-email'
+    const scope = 'user-read-private user-read-email user-top-read'
 
     res.cookie(stateKey, state)
 
@@ -40,7 +40,7 @@ app.get('/login', (req, res) => {
             scope,
             redirect_uri,
             state,
-            show_dialog: false,
+            show_dialog: true,
         })
     )
 })
@@ -64,58 +64,66 @@ app.get('/callback', (req, res) =>  {
     let accessToken = req.query.access_token || null
     let refreshToken = req.query.refresh_token || null
 
-    if (!refreshToken) {
-        
+    if (refreshToken && accessToken) {
+        res.redirect('/refresh_token?'+ querystring.stringify({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+        }))
     }
-
 
     let authOptions = {
         url: 'https://accounts.spotify.com/api/token',
-        form: {
+        method: 'post',
+        data: new URLSearchParams({
             code,
             redirect_uri,
             grant_type: 'authorization_code'
-        },
+        }),
         headers: {
-            'content-type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/x-www-form-urlencoded',
             'Authorization': 'Basic ' + (Buffer.from(process.env.CLIENT_ID + ':' + process.env.CLIENT_SECRET).toString('base64'))
-        },
-        json: true
-    };
-
-    request.post(authOptions, (error, response, body) => {
-        if (error || response.statusCode !== 200) {
-            console.log("error is " + error + ' response status: '+ response.statusCode)
-            res.status(500).end("SOMETHING SUSSY AGAIN")
-
-        } else {
-            console.log(body)
-            accessToken = body.access_token
-            refreshToken = body.refresh_token
-            //res.json({ access_token: accessToken });
-            req.query.refresh_token = refreshToken
-            //res.send("now go to / for some more action")
-            //res.json({'yo': 'hoi'})
-            console.log("refresh token 1: " + req.query.refresh_token)
-
-            let options = {
-                url: 'https://api.spotify.com/v1/me',
-                headers: {'Authorization': 'Bearer ' + accessToken},
-                json: true,
-            }
-
-            request.get(options, (error, respone, body) => {
-                
-                console.log(body)
-            })
-
-            res.redirect('/?' + querystring.stringify({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-            }))
-            
         }
-    });
+    };
+    
+    axios(authOptions)
+        .then(response => {
+            const body = response.data;
+    
+            if (response.status !== 200) {
+                console.log("error is " + body.error + ' response status: ' + response.status);
+                res.status(500).end("SOMETHING SUSSY AGAIN");
+            } else {
+                console.log(body);
+                accessToken = body.access_token;
+                refreshToken = body.refresh_token;
+    
+                req.query.refresh_token = refreshToken;
+                req.query.access_token = accessToken;
+    
+                console.log("accessToken initial: " + accessToken);
+    
+                axios.get('https://api.spotify.com/v1/me',
+                    {
+                        headers: {'Authorization': 'Bearer ' + accessToken}
+                    }
+                )
+                    .then(response => {
+                        console.log(response.data);
+                    })
+                    .catch(error => {
+                        console.log('Error fetching user data:', error);
+                    });
+    
+                res.redirect('/?' + querystring.stringify({
+                    access_token: accessToken,
+                    refresh_token: refreshToken,
+                }));
+            }
+        })
+        .catch(error => {
+            console.error('Error during token exchange:', error);
+            res.status(500).end("SOMETHING SUSSY AGAIN");
+        });
 
 });
 
@@ -148,14 +156,33 @@ app.get('/refresh_token', (req, res) => {
 })
 
 app.get('/', (req, res) => {
-    let accessToken = req.query.access_token || null
-    let refreshToken = req.query.refresh_token || null
+    let accessToken = req.query.access_token || null;
 
-    
-    console.log('access token in the /', accessToken)
-    console.log('refresh token in the /', refreshToken)
-    res.json({accessToken, refreshToken})
-})
+    //console.log('access tokennnn', accessToken) successfully getting the accessToken here
+
+    axios.get(
+        'https://api.spotify.com/v1/me/top/artists',
+        {
+            headers: {
+                'Authorization': 'Bearer ' + accessToken,
+                'Content-Type': 'application/json',
+            },
+            params: {
+                limit: 10,
+                time_range: 'short_term',
+            },
+        }
+    )
+        .then(response => {
+            console.log(response)
+            res.json(response.data)
+        })
+        .catch(err => {
+            console.log(err)
+            res.status(404).json(err)
+        })
+
+});
 
 app.listen(PORT, () => {
     console.log("App started at the port " + PORT)
